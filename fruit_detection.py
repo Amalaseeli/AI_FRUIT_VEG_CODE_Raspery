@@ -238,7 +238,7 @@ def one_shot_detect(crop):
 
                 if conf < 0.25:
                     continue
-                elif conf < 0.85:
+                elif conf < 0.88:
                     label = "Unknown"
                 else:
                     label = base_label
