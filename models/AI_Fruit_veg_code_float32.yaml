@@ -1,0 +1,19 @@
+# models/AI_Fruit_veg_code_float16.yaml
+{
+  'description': 'Ultralytics YOLO11n model trained on ...',
+  'stride': 32,
+  'task': 'detect',
+  'imgsz': [320, 320],
+  'names': {
+    0: 'AI001',
+    1: 'AI002',
+    2: 'AI003',
+    3: 'AI004',
+    4: 'AI005',
+    5: 'AI006',
+    6: 'AI007',
+    7: 'AI008',
+    8: 'AI009',
+    9: 'AI010'
+  }
+}
