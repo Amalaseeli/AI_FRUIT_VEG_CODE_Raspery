@@ -1,0 +1,4 @@
+python -m PyInstaller --noconfirm --onedir --windowed --name "SCSFC" ^
+--add-data "D:\AI_FRUIT_CODE_DETECTION\db_cred.yaml;." ^
+--add-data "D:\AI_FRUIT_CODE_DETECTION;models" ^
+"D:\AI_FRUIT_CODE_DETECTION\fruit_detection.py"

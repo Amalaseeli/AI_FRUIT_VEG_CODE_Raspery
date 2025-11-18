@@ -1,0 +1,7 @@
+server : 192.168.0.197
+port : 2005
+database : "EposV3"
+username : "sa"
+password : "mg812yn"
+driver : freeTDS
+
