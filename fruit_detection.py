@@ -14,6 +14,7 @@ from config_utils_fruit import classNames,ROI_PATH as roi_path , MODEL_PATH as m
 import os
 # Use direct DB writer by default; API writer is optional
 from save_to_db import save_detected_product, clear_database  # type: ignore
+from save_products_info_to_db import save_products_from_csv  # type: ignore
 import math
 from collections import Counter
 import json
@@ -591,3 +592,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    save_products_from_csv()
