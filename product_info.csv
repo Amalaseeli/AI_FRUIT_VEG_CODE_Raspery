@@ -1,7 +1,11 @@
-Code, Name
-AI001,Apple 
-AI002,Avocado
-AI003 ,Banana
-AI004,Orange
-AI005,Passion Fruit
-AI006,Tomato
+Code, Name, Barcode
+AI001,Apple,204001 
+AI002,Avocado,204014
+AI003,Banana,204004
+AI004,Orange,204003
+AI005,Passion Fruit,204013
+AI006,Tomato,204010
+AI007,Garlic,204015
+AI008,Ginger,204016
+AI009,Onion,204017
+AI010,Potato,204018

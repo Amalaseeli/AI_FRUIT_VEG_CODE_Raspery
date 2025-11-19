@@ -10,7 +10,7 @@ except Exception:
 import cv2
 import numpy as np
 import pyautogui
-from config_utils_fruit import ROI_PATH as roi_path , MODEL_PATH as model_path, product_data, classNames
+from config_utils_fruit import classNames,ROI_PATH as roi_path , MODEL_PATH as model_path
 import os
 # Use direct DB writer by default; API writer is optional
 from save_to_db import save_detected_product, clear_database  # type: ignore
@@ -32,6 +32,7 @@ except Exception:
     pass
 os.environ.setdefault('OMP_NUM_THREADS', '2')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
+
 
 # Load the detection model (Ultralytics or TFLite wrapper)
 if _USING_ULTRALYTICS:
@@ -305,12 +306,11 @@ def _dedupe_detections(dets, iou_same: float = 0.5, iou_diff: float = 0.7):
 def _build_payload_from_counts(counts_dict):
     payload = []
     for product, count in counts_dict.items():
-        meta = product_data.get(product)
-        barcode = meta.get('barcode') if meta else 'N/A'
+        
         payload.append({
             'Name': product,
             'Count': int(count),
-            'barcode': barcode
+            
         })
     return payload
 
@@ -324,7 +324,7 @@ def _canonicalize_product_name(raw_name: str) -> str:
         return "Unknown"
     candidate = raw_name.strip()
     candidate_lower = candidate.lower()
-    for known_name in product_data.keys():
+    for known_name in classNames:
         if known_name.lower() == candidate_lower:
             return known_name
     return candidate or "Unknown"

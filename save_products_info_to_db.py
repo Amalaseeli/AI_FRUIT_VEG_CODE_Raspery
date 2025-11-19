@@ -2,6 +2,35 @@ import csv
 from pathlib import Path
 from db_utils import DatabaseConnector
 import pyodbc
+from config_utils_fruit import DATA_DIR, resource_path
+
+
+DEFAULT_PRODUCTS_FILENAME = "product_info.csv"
+
+
+def _resolve_csv_path(csv_path: str | Path | None) -> Path | None:
+    """
+    Return a writable CSV path. If no path is provided we copy the packaged
+    CSV into DATA_DIR (user-writable) on first run and always return that copy.
+    """
+    if csv_path:
+        return Path(csv_path)
+
+    data_dir = Path(DATA_DIR)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    writable_csv = data_dir / DEFAULT_PRODUCTS_FILENAME
+
+    if not writable_csv.exists():
+        packaged_csv = Path(resource_path(DEFAULT_PRODUCTS_FILENAME))
+        if packaged_csv.exists():
+            try:
+                writable_csv.write_text(packaged_csv.read_text(encoding="utf-8"), encoding="utf-8")
+            except Exception as exc:
+                print(f"Warning: could not seed writable CSV: {exc}")
+        else:
+            return None
+
+    return writable_csv
 
 
 def save_products_from_csv(csv_path: str | Path | None = None):
@@ -17,9 +46,9 @@ def save_products_from_csv(csv_path: str | Path | None = None):
         print("Warning: Database connection not established. Aborting.")
         return 0, 0
 
-    # Resolve CSV path; default to repo-local product_info.csv
-    csv_file = Path(csv_path) if csv_path else Path(__file__).resolve().parent / "product_info.csv"
-    if not csv_file.exists():
+    # Resolve CSV path; default to writable copy under DATA_DIR
+    csv_file = _resolve_csv_path(csv_path)
+    if not csv_file or not csv_file.exists():
         print(f"CSV not found: {csv_file}")
         connection.close()
         return 0, 0
