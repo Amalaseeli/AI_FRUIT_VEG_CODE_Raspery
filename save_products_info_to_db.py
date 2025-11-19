@@ -97,7 +97,7 @@ def save_products_from_csv(csv_path: str | Path | None = None):
                         continue
                     code = (row[0] if len(row) > 0 else "").strip()
                     name = (row[1] if len(row) > 1 else "").strip()
-                    barcode = (row.get(barcode_key) or "").strip() if barcode_key else None
+                    barcode = (row[2] if len(row) > 2 else "").strip()
                     if not code or not name:
                         continue
                     cursor.execute("UPDATE AIProducts SET Name = ?, Barcode = ? WHERE Code = ?", (name,barcode, code))
@@ -110,9 +110,10 @@ def save_products_from_csv(csv_path: str | Path | None = None):
                 for row in reader:
                     code = (row.get(code_key) or "").strip()
                     name = (row.get(name_key) or "").strip()
+                    barcode = (row.get(barcode_key) or "").strip() if barcode_key else ""
                     if not code or not name:
                         continue
-                    cursor.execute("UPDATE AIProducts SET Name = ?, Barcode = ? WHERE Code = ?", (name, code, barcode))
+                    cursor.execute("UPDATE AIProducts SET Name = ?, Barcode = ? WHERE Code = ?", (name, barcode, code))
                     if cursor.rowcount and cursor.rowcount > 0:
                         updated += 1
                     else:
