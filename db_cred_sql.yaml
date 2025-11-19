@@ -1,5 +1,5 @@
-server : 192.168.0.197
-port : 2005
+server : 192.168.0.142
+port : 2003
 database : "EposV3"
 username : "sa"
 password : "mg812yn"

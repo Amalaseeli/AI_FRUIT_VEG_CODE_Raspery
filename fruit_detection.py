@@ -1,21 +1,60 @@
-from ultralytics import YOLO
+
+
+
+try:
+    from ultralytics import YOLO  # type: ignore
+    _USING_ULTRALYTICS = True
+except Exception:
+    from tflite_yolo import TFLiteYOLO as YOLO  # type: ignore
+    _USING_ULTRALYTICS = False
 import cv2
 import numpy as np
 import pyautogui
-from config_utils_fruit import ROI_PATH as roi_path, MODEL_PATH as model_path
+from config_utils_fruit import ROI_PATH as roi_path , MODEL_PATH as model_path, product_data, classNames
 import os
-from save_to_db import save_detected_product, clear_database
+# Use direct DB writer by default; API writer is optional
+from save_to_db import save_detected_product, clear_database  # type: ignore
 import math
 from collections import Counter
 import json
 from enum import Enum, auto
 from PIL import Image, ImageDraw, ImageFont
+import time
+import os
 
-# Load the YOLO model
-model = YOLO(model_path)
-names = model.names if hasattr(model, "names") else {}
 
-# Screen size with fallback for headless environments
+HEADLESS = os.environ.get("HEADLESS", "0") == "1"
+try:
+    import torch
+    torch.set_num_threads(2)
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
+os.environ.setdefault('OMP_NUM_THREADS', '2')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
+
+# Load the detection model (Ultralytics or TFLite wrapper)
+if _USING_ULTRALYTICS:
+    model = YOLO(model_path)
+else:
+    # Provide class name mapping to the TFLite wrapper and allow tuning threads/delegate via env
+    names_map = {i: n for i, n in enumerate(classNames)}
+    try:
+        tfl_threads = int(os.getenv("TFL_THREADS", "4"))
+    except Exception:
+        tfl_threads = 2
+    tfl_delegate = os.getenv("TFL_DELEGATE", "")
+    model = YOLO(model_path, names=names_map, num_threads=tfl_threads, delegate=tfl_delegate)
+
+
+
+try:
+    _ = model(np.zeros((320,320,3), dtype = np.uint8), imgsz=320, verbose=False, device ='cpu')
+except Exception:
+    pass
+names = getattr(model, 'names', {}) if hasattr(model, 'names') else {}
+
+# Screen size with headless-safe fallback
 try:
     screen_width, screen_height = pyautogui.size()
 except Exception:
@@ -72,6 +111,7 @@ def camera_error_overlay(width: int = 500, height: int = 500):
 
 
 def select_or_load_roi(cap, path):
+    # If previously saved, use it
     if os.path.exists(path):
         try:
             with open(path, 'r') as f:
@@ -80,10 +120,14 @@ def select_or_load_roi(cap, path):
         except Exception:
             pass
 
+    # Try to read a frame for ROI
     ok, img = cap.read()
     if not ok or img is None:
         return None
+
+    # Try GUI ROI selector; if it fails (headless), use full image
     try:
+        
         cv2.namedWindow("select the area")
         cv2.moveWindow("select the area", 0, 0)
         x, y, w, h = cv2.selectROI("select the area", img, fromCenter=False, showCrosshair=True)
@@ -107,21 +151,21 @@ def roi_within_bounds(roi, frame_width, frame_height):
     return (x, y, w, h)
 
 
-def draw_overlay(img, text, position="center", box_w_ratio=0.75, box_h=60, color=(255, 255, 255), bg=(0, 0, 0), alpha=0.35):
+def draw_overlay(img, text, position = "center",box_w_ratio = 0.75, box_h = 60,color=(255, 255, 255), bg=(0, 0, 0), alpha=0.35):
     h, w = img.shape[:2]
     box_w = int(w * box_w_ratio)
-    x1 = int((w - box_w) / 2)
+    x1 = int((w - box_w)/2)
     x2 = x1 + box_w
 
     if position == "center":
-        y1 = int(h // 2 - box_h / 2)
+        y1 = int(h//2 - box_h/2)
         y2 = y1 + box_h
     else:
         y1 = 0
         y2 = int(box_h)
     overlay = img.copy()
     cv2.rectangle(overlay, (x1, int(y1)), (x2, int(y2)), bg, -1)
-    img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+    img[:] = cv2.addWeighted(overlay, alpha, img, 1-alpha, 0)
     (text_size, baseline) = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
     text_w, text_h = text_size
     text_x = int(x1 + (box_w - text_w) / 2)
@@ -157,11 +201,27 @@ def draw_labels_centered(img, boxes_labels, src_size):
         cv2.putText(img, str(label), (x, y), font, font_scale, color, thickness, cv2.LINE_AA)
 
 
+def draw_boxes(img, boxes_labels, src_size, color=(0, 255, 0), thickness=2):
+    if not boxes_labels:
+        return
+    h, w = img.shape[:2]
+    if not src_size or src_size[0] == 0 or src_size[1] == 0:
+        scale_x = 1.0
+        scale_y = 1.0
+    else:
+        scale_x = float(w) / float(src_size[0])
+        scale_y = float(h) / float(src_size[1])
+    for (x1, y1, x2, y2, _label) in boxes_labels:
+        p1 = (int(x1 * scale_x), int(y1 * scale_y))
+        p2 = (int(x2 * scale_x), int(y2 * scale_y))
+        cv2.rectangle(img, p1, p2, color, thickness)
+
+
 # Motion detection
 prev_frame = None
 motion_area_threshold = 2000
-motion_frames_required = 3
-stable_frames_required = 5
+motion_frames_required = 2
+stable_frames_required = 1
 motion_count = 0
 stable_count = 0
 
@@ -178,7 +238,24 @@ stable_payload_sent = False
 frozen_boxes_labels = []
 frozen_src_size = None
 placing_just_entered = False
-placing_counts_max = {}
+
+
+def _open_camera():
+    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(0, cv2.CAP_ANY)
+    # Reduce buffering and latency and enforce small frame
+    try:
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
+    try:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    except Exception:
+        pass
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    return cap
 
 
 def _iou(box_a, box_b):
@@ -198,89 +275,119 @@ def _iou(box_a, box_b):
         return 0.0
     return inter / union
 
+def _dedupe_detections(dets, iou_same: float = 0.5, iou_diff: float = 0.7):
+    """
+    Suppress overlapping boxes so a single object doesn't get two labels.
+    - Same-class overlaps (IoU >= iou_same): keep highest-confidence only.
+    - Different-class overlaps (IoU >= iou_diff): keep highest-confidence only.
+    dets: list[(x1, y1, x2, y2, label, conf)]
+    """
+    if not dets:
+        return dets
+    dets_sorted = sorted(dets, key=lambda d: float(d[5]), reverse=True)
+    kept = []
+    for d in dets_sorted:
+        suppress = False
+        for k in kept:
+            iou = _iou((d[0], d[1], d[2], d[3]), (k[0], k[1], k[2], k[3]))
+            if d[4] == k[4]:
+                if iou >= iou_same:
+                    suppress = True
+                    break
+            else:
+                if iou >= iou_diff:
+                    suppress = True
+                    break
+        if not suppress:
+            kept.append(d)
+    return kept
 
 def _build_payload_from_counts(counts_dict):
     payload = []
     for product, count in counts_dict.items():
-      
+        meta = product_data.get(product)
+        barcode = meta.get('barcode') if meta else 'N/A'
         payload.append({
-            'Code': product,
+            'Name': product,
             'Count': int(count),
-            
+            'barcode': barcode
         })
     return payload
 
 
+def _canonicalize_product_name(raw_name: str) -> str:
+    """
+    Map detector-provided labels to the canonical keys used in product_data.
+    Falls back to the original label (or 'Unknown') if no match is found.
+    """
+    if not raw_name:
+        return "Unknown"
+    candidate = raw_name.strip()
+    candidate_lower = candidate.lower()
+    for known_name in product_data.keys():
+        if known_name.lower() == candidate_lower:
+            return known_name
+    return candidate or "Unknown"
+
+
 def one_shot_detect(crop):
     try:
-        imgsz = int(np.clip(max(crop.shape[0], crop.shape[1]), 320, 960))
-        stride = 32
-        imgsz = int(math.ceil(imgsz / stride) * stride)
-        # Revert to class-agnostic NMS (baseline behaviour)
-        preds = model(crop, imgsz=imgsz, agnostic_nms=True)
+        # Fixed small input for speed on Pi
+        preds = model(crop, imgsz=320, agnostic_nms=False, verbose=False, device='cpu')[0]
     except Exception:
         return [], Counter(), []
 
-    raw = []
-    if preds:
-        results = preds[0]
-        if hasattr(results, "boxes") and results.boxes is not None:
-            for box in results.boxes:
-                x1, y1, x2, y2 = box.xyxy[0]
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                cls = int(box.cls[0]) if box.cls is not None else None
-                if cls is not None and isinstance(names, dict):
-                    base_label = names.get(cls, "Unknown")
-                else:
-                    base_label = "Unknown"
-                label = base_label
-                conf = float(box.conf[0]) if hasattr(box, "conf") and box.conf is not None else 0.0
+    boxes_for_iou = []
+    counts = Counter()
+    boxes_labels = []
+    model_names = model.names if hasattr(model, "names") else {}
 
-                if conf < 0.25:
+    try:
+        dets = []
+        if hasattr(preds, 'boxes') and preds.boxes is not None:
+            # Handle both Ultralytics tensors and our numpy wrapper
+            xyxy = preds.boxes.xyxy
+            cls = preds.boxes.cls
+            conf_arr = preds.boxes.conf
+            # Convert to numpy arrays
+            xyxy = xyxy if isinstance(xyxy, np.ndarray) else xyxy.cpu().numpy()
+            cls = cls if isinstance(cls, np.ndarray) else cls.cpu().numpy()
+            conf_arr = conf_arr if isinstance(conf_arr, np.ndarray) else conf_arr.cpu().numpy()
+            xyxy = xyxy.astype(int)
+            cls = cls.astype(int)
+            unknown_conf = 0.85
+            for (x1, y1, x2, y2), c, cf in zip(xyxy, cls, conf_arr):
+                if cf < 0.25:
                     continue
-                elif conf < 0.88:
-                    label = "Unknown"
-                else:
-                    label = base_label
+                class_id = int(c)
+                raw_name = model_names.get(class_id, f"Class {class_id}")
+                canonical_name = _canonicalize_product_name(raw_name)
+                if cf < unknown_conf:
+                    canonical_name = "Unknown"
+                dets.append((int(x1), int(y1), int(x2), int(y2), canonical_name, float(cf)))
 
+        # Deduplicate overlapping detections
+        dets = _dedupe_detections(dets, iou_same=0.5, iou_diff=0.7)
+        for x1, y1, x2, y2, canonical_name, cf in dets:
+            boxes_for_iou.append((x1, y1, x2, y2))
+            display_label = f'{canonical_name}, {cf:.2f}'
+            boxes_labels.append((x1, y1, x2, y2, display_label))
+            counts[canonical_name] += 1
+    except Exception:
+        pass
 
-                
-                raw.append((x1, y1, x2, y2, label, conf))
+    return boxes_for_iou, counts, boxes_labels
 
-    # Baseline: confidence-ordered IoU suppression across all classes
-    raw.sort(key=lambda b: b[5], reverse=True)
-    deduped = []
-    for cand in raw:
-        cx1, cy1, cx2, cy2, clabel, cconf = cand
-        keep = True
-        for kept in deduped:
-            kx1, ky1, kx2, ky2, klabel, kconf = kept
-            if _iou((cx1, cy1, cx2, cy2), (kx1, ky1, kx2, ky2)) > 0.5:
-                keep = False
-                break
-        if keep:
-            deduped.append(cand)
-
-    out_boxes = [(x1, y1, x2, y2, label) for (x1, y1, x2, y2, label, _c) in deduped]
-    labels = [label for (_x1, _y1, _x2, _y2, label, _c) in deduped]
-
-    counts = Counter(labels)
-    payload = []
-    for product, count in counts.items():
-        
-        payload.append({
-            'Code': product,
-            'Count': int(count),
-           
-        })
-    return out_boxes, counts, payload
+    
 
 
 def main():
-    global prev_frame, motion_count, stable_count, state, has_cleared_db, stable_payload_sent
-    global frozen_boxes_labels, frozen_src_size, placing_just_entered, placing_counts_max
-
-    cap = cv2.VideoCapture(0, cv2.CAP_ANY)
+    cap = _open_camera()
+    cv2.setUseOptimized(True)
+    try:
+        cv2.setNumThreads(2)
+    except Exception:
+        pass
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -302,8 +409,19 @@ def main():
     video_height = min(video_height, screen_height)
     render_size = (video_width, video_height)
 
-    cv2.namedWindow("VBR Realtime scanner", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("VBR Realtime scanner", video_width, screen_height)
+    if not HEADLESS:
+        cv2.namedWindow("VBR Realtime scanner", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("VBR Realtime scanner", video_width, screen_height)
+
+    global prev_frame, motion_count, stable_count
+    state = MotionState.IDLE
+    has_cleared_db = False
+    stable_payload_sent = False
+    pending_payload = None
+    placing_counts_max = {}
+    frozen_boxes_labels = []
+    frozen_src_size = None
+    placing_just_entered = False
 
     while True:
         ret, frame = cap.read()
@@ -314,9 +432,10 @@ def main():
             continue
 
         H, W = frame.shape[:2]
-        rx, ry, rw, rh = roi_within_bounds((rx, ry, rw, rh), W, H)
-        cropped_frame = frame[ry:ry + rh, rx:rx + rw]
+        rx, ry, rw, rh = roi_within_bounds(roi_cordinates, W, H)
+        cropped_frame = frame[ry:ry+rh, rx:rx+rw]
 
+        # Motion check on ROI
         gray = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
         motion_detected = False
@@ -329,6 +448,7 @@ def main():
             motion_detected = total_motion_area > motion_area_threshold
         prev_frame = gray
 
+        # Update motion state
         if motion_detected:
             motion_count += 1
             stable_count = 0
@@ -336,6 +456,7 @@ def main():
             stable_count += 1
             motion_count = 0
 
+        # State transitions
         if state == MotionState.IDLE:
             if motion_count >= motion_frames_required:
                 state = MotionState.PLACING
@@ -347,16 +468,18 @@ def main():
                 except Exception as e:
                     print(f"Error clearing DB on entering PLACING: {e}")
                 stable_payload_sent = False
-                frozen_boxes_labels = []
+                pending_payload = None
                 placing_counts_max = {}
+                frozen_boxes_labels = []
                 placing_just_entered = True
             else:
-                tmp_boxes, tmp_counts, tmp_payload = one_shot_detect(cropped_frame)
-                if tmp_payload:
-                    frozen_boxes_labels = tmp_boxes
+                boxes_for_iou, counts, boxes_labels = one_shot_detect(cropped_frame)
+                has_items = bool(boxes_labels)
+                if has_items:
+                    frozen_boxes_labels = boxes_labels
                     frozen_src_size = (cropped_frame.shape[1], cropped_frame.shape[0])
                     state = MotionState.STABLE
-                    placing_counts_max = {k: int(v) for k, v in tmp_counts.items()}
+                    placing_counts_max = {k: int(v) for k, v in counts.items()}
                     final_payload = _build_payload_from_counts(placing_counts_max)
                     try:
                         if not stable_payload_sent:
@@ -371,10 +494,10 @@ def main():
                         has_cleared_db = True
 
         elif state == MotionState.PLACING:
-            boxes, counts, payload = one_shot_detect(cropped_frame)
-            has_items = bool(payload)
+            boxes_for_iou, counts, boxes_labels = one_shot_detect(cropped_frame)
+            has_items = bool(boxes_labels)
             if has_items:
-                frozen_boxes_labels = boxes
+                frozen_boxes_labels = boxes_labels
                 frozen_src_size = (cropped_frame.shape[1], cropped_frame.shape[0])
                 for product, cnt in counts.items():
                     prev = placing_counts_max.get(product, 0)
@@ -386,7 +509,6 @@ def main():
                     state = MotionState.STABLE
                     try:
                         if not stable_payload_sent:
-                            # Use the counts from the stable frame for exact match with UI
                             final_payload = _build_payload_from_counts({k: int(v) for k, v in counts.items()})
                             save_detected_product(json.dumps(final_payload))
                             stable_payload_sent = True
@@ -398,20 +520,21 @@ def main():
                     frozen_boxes_labels = []
                     stable_payload_sent = False
                     has_cleared_db = False
+                    pending_payload = None
                     placing_counts_max = {}
                     try:
                         clear_database()
                         has_cleared_db = True
                     except Exception as e:
                         print(f"Error clearing database in PLACING->IDLE: {e}")
-
         elif state == MotionState.STABLE:
             if motion_count >= motion_frames_required:
                 state = MotionState.PLACING
                 stable_payload_sent = False
                 frozen_boxes_labels = []
+                pending_payload = None
                 placing_counts_max = {}
-                # Clear DB as soon as new motion starts (customer changing items)
+                # Clear DB as soon as new motion starts
                 try:
                     if not has_cleared_db:
                         clear_database()
@@ -419,24 +542,32 @@ def main():
                 except Exception as e:
                     print(f"Error clearing DB on STABLE->PLACING: {e}")
 
-        view = cropped_frame.copy()
-        resized = cv2.resize(view, render_size)
-        if state == MotionState.IDLE:
-            draw_overlay(resized, "Waiting for item", position="center")
-        elif state == MotionState.PLACING:
-            if placing_just_entered:
-                draw_overlay(resized, "Welcome to VBR realtime scanner", position="center", color=(255, 0, 0))
-                placing_just_entered = False
-            else:
-                draw_overlay(resized, "Placing items", position="center")
-        elif state == MotionState.STABLE:
-            draw_labels_centered(resized, frozen_boxes_labels, frozen_src_size)
-            draw_overlay(resized, "Proceed to payment now...", position="top", color=(0, 255, 0))
+        # Rendering
+        
+        if not HEADLESS:
+            view = cropped_frame.copy()
+            resized = cv2.resize(view, render_size)
+            if state == MotionState.IDLE:
+                draw_overlay(resized, "Waiting for item", position="center")
+            elif state == MotionState.PLACING:
+                if placing_just_entered:
+                    draw_overlay(resized, "Welcome to VBR realtime scanner", position="center", color=(255, 0, 0))
+                    placing_just_entered = False
+                else:
+                    draw_overlay(resized, "Placing items", position="center")
+            elif state == MotionState.STABLE:
+                # Draw boxes and labels for clarity
+                draw_boxes(resized, frozen_boxes_labels, frozen_src_size)
+                draw_labels_centered(resized, frozen_boxes_labels, frozen_src_size)
+                draw_overlay(resized, "Proceed to payment now...", position="top", color=(0, 255, 0))
 
-        full_frame[:render_size[1], :] = resized
-        cv2.imshow("VBR Realtime scanner", full_frame)
+            full_frame[:render_size[1], :] = resized
+            
+            cv2.imshow("VBR Realtime scanner", full_frame)
 
-        key = cv2.waitKey(1) & 0xFF
+            key = cv2.waitKey(1) & 0xFF
+        else:
+            key = 255
         if key == ord('q'):
             break
         elif key == ord('r'):
@@ -445,8 +576,6 @@ def main():
                     os.remove(roi_path)
                 except Exception as e:
                     print(f"Could not remove ROI file: {e}")
-            # Reset motion background after ROI change to avoid false motion
-            prev_frame = None
             new_roi = select_or_load_roi(cap, roi_path)
             if new_roi:
                 rx, ry, rw, rh = new_roi
