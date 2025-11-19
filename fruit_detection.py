@@ -591,5 +591,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
     save_products_from_csv()
+    main()
+    

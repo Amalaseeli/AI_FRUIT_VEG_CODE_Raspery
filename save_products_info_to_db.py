@@ -68,7 +68,8 @@ def save_products_from_csv(csv_path: str | Path | None = None):
             BEGIN
                 CREATE TABLE AIProducts (
                     Code NVARCHAR(50) NOT NULL PRIMARY KEY,
-                    Name NVARCHAR(255) NOT NULL
+                    Name NVARCHAR(255) NOT NULL,
+                    Barcode NVARCHAR(50) NULL
                 )
             END
             """
@@ -84,6 +85,7 @@ def save_products_from_csv(csv_path: str | Path | None = None):
             name_map = {fn.lower(): fn for fn in fieldnames}
             code_key = name_map.get("code")
             name_key = name_map.get("name")
+            barcode_key = name_map.get("barcode")
 
             if code_key is None or name_key is None:
                 # Fallback to simple reader by index if headers are unexpected
@@ -95,13 +97,14 @@ def save_products_from_csv(csv_path: str | Path | None = None):
                         continue
                     code = (row[0] if len(row) > 0 else "").strip()
                     name = (row[1] if len(row) > 1 else "").strip()
+                    barcode = (row.get(barcode_key) or "").strip() if barcode_key else None
                     if not code or not name:
                         continue
-                    cursor.execute("UPDATE AIProducts SET Name = ? WHERE Code = ?", (name, code))
+                    cursor.execute("UPDATE AIProducts SET Name = ?, Barcode = ? WHERE Code = ?", (name,barcode, code))
                     if cursor.rowcount and cursor.rowcount > 0:
                         updated += 1
                     else:
-                        cursor.execute("INSERT INTO AIProducts (Code, Name) VALUES (?, ?)", (code, name))
+                        cursor.execute("INSERT INTO AIProducts (Code, Name, Barcode) VALUES (?, ?, ?)", (code, name, barcode))
                         inserted += 1
             else:
                 for row in reader:
@@ -109,11 +112,11 @@ def save_products_from_csv(csv_path: str | Path | None = None):
                     name = (row.get(name_key) or "").strip()
                     if not code or not name:
                         continue
-                    cursor.execute("UPDATE AIProducts SET Name = ? WHERE Code = ?", (name, code))
+                    cursor.execute("UPDATE AIProducts SET Name = ?, Barcode = ? WHERE Code = ?", (name, code, barcode))
                     if cursor.rowcount and cursor.rowcount > 0:
                         updated += 1
                     else:
-                        cursor.execute("INSERT INTO AIProducts (Code, Name) VALUES (?, ?)", (code, name))
+                        cursor.execute("INSERT INTO AIProducts (Code, Name, Barcode) VALUES (?, ?, ?)", (code, name, barcode))
                         inserted += 1
 
         connection.commit()
