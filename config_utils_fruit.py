@@ -36,7 +36,7 @@ def get_data_dir() -> str:
 
 MODEL_PATH = resource_path(os.path.join("models", "AI_Fruit_veg_code_float16.tflite"))
 
-classNames = ['AI001', 'AI002', 'AI003', 'AI004', 'AI005', 'AI006', 'AI007', 'AI008', 'AI009', 'AI010']
+classNames = ['AI011', 'AI012', 'AI013', 'AI014', 'AI015', 'AI016', 'AI017', 'AI018', 'AI019', 'AI020']
 
 DATA_DIR = get_data_dir()
 ROI_PATH = os.path.join(DATA_DIR, "roi.txt")
