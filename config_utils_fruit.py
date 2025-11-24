@@ -34,7 +34,7 @@ def get_data_dir() -> str:
         return os.path.dirname(os.path.abspath(__file__))
 
 
-MODEL_PATH = resource_path(os.path.join("models", "AI_Fruit_veg_code_float16.tflite"))
+MODEL_PATH = resource_path(os.path.join("models", "V2", "best_float32.tflite"))
 
 classNames = ['AI011', 'AI012', 'AI013', 'AI014', 'AI015', 'AI016', 'AI017', 'AI018', 'AI019', 'AI020']
 
