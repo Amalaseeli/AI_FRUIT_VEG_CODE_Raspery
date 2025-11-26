@@ -41,3 +41,7 @@ pip install -r requirements.txt
 ```bash
 python fruit_detection.py
 ```
+## Authors
+
+- [Amalaseeli](https://github.com/amalaseeli-VBR)
+
