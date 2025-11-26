@@ -43,5 +43,5 @@ python fruit_detection.py
 ```
 ## Authors
 
-- [Amalaseeli](https://github.com/amalaseeli-VBR)
+- [Amalaseeli](https://github.com/Amalaseeli)
 
