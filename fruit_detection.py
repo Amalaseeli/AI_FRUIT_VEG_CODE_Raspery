@@ -2,19 +2,18 @@
 
 
 try:
-    from ultralytics import YOLO  # type: ignore
+    from ultralytics import YOLO  
     _USING_ULTRALYTICS = True
 except Exception:
-    from tflite_yolo import TFLiteYOLO as YOLO  # type: ignore
+    from tflite_yolo import TFLiteYOLO as YOLO  
     _USING_ULTRALYTICS = False
 import cv2
 import numpy as np
 import pyautogui
 from config_utils_fruit import classNames,ROI_PATH as roi_path , MODEL_PATH as model_path
 import os
-# Use direct DB writer by default; API writer is optional
-from save_to_db import save_detected_product, clear_database  # type: ignore
-from save_products_info_to_db import save_products_from_csv  # type: ignore
+from save_to_db import save_detected_product, clear_database  
+from save_products_info_to_db import save_products_from_csv  
 import math
 from collections import Counter
 import json
@@ -113,7 +112,7 @@ def camera_error_overlay(width: int = 500, height: int = 500):
 
 
 def select_or_load_roi(cap, path):
-    # If previously saved, use it
+    
     if os.path.exists(path):
         try:
             with open(path, 'r') as f:
@@ -122,12 +121,11 @@ def select_or_load_roi(cap, path):
         except Exception:
             pass
 
-    # Try to read a frame for ROI
+   
     ok, img = cap.read()
     if not ok or img is None:
         return None
 
-    # Try GUI ROI selector; if it fails (headless), use full image
     try:
         
         cv2.namedWindow("select the area")
@@ -221,7 +219,7 @@ def draw_boxes(img, boxes_labels, src_size, color=(0, 255, 0), thickness=2):
 
 # Motion detection
 prev_frame = None
-motion_area_threshold = 2000
+motion_area_threshold = 8000
 motion_frames_required = 2
 stable_frames_required = 1
 motion_count = 0
@@ -442,8 +440,9 @@ def main():
         motion_detected = False
         if prev_frame is not None:
             frame_delta = cv2.absdiff(prev_frame, gray)
-            _, thresh = cv2.threshold(frame_delta, 18, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(frame_delta, 35, 255, cv2.THRESH_BINARY)
             thresh = cv2.dilate(thresh, None, iterations=2)
+            frame_delta = cv2.medianBlur(frame_delta, 3)
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             total_motion_area = sum(cv2.contourArea(c) for c in contours)
             motion_detected = total_motion_area > motion_area_threshold
