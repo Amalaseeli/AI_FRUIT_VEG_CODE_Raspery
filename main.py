@@ -1,52 +1,34 @@
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO  
     _USING_ULTRALYTICS = True
 except Exception:
-    from tflite_yolo import TFLiteYOLO as YOLO
+    from tflite_yolo import TFLiteYOLO as YOLO  
     _USING_ULTRALYTICS = False
-
 import cv2
 import numpy as np
 import pyautogui
-from config_utils_fruit import classNames, ROI_PATH as roi_path, MODEL_PATH as model_path
+from config_utils_fruit import classNames,ROI_PATH as roi_path , MODEL_PATH as model_path
 import os
-from save_to_db import save_detected_product, clear_database
-from save_products_info_to_db import save_products_from_csv
+from save_to_db import save_detected_product, clear_database  
+from save_products_info_to_db import save_products_from_csv  
 import math
 from collections import Counter
 import json
 from enum import Enum, auto
 from PIL import Image, ImageDraw, ImageFont
 import time
-import csv
-from datetime import datetime
-from uuid import uuid4
-# Additions
-import subprocess
-import wave
-import tempfile
-from pathlib import Path
+import os
 
-
-LOG_DIR = os.path.join(os.path.dirname(__file__), "detections_log")
-LOG_CSV = os.path.join(LOG_DIR, "detections.csv")
-os.makedirs(LOG_DIR, exist_ok=True)
-
-
-TRAIN_IMAGE_DIR = Path(os.path.dirname(__file__)) / "train_images"
-TRAIN_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 HEADLESS = os.environ.get("HEADLESS", "0") == "1"
-
 try:
     import torch
     torch.set_num_threads(2)
     torch.set_num_interop_threads(1)
 except Exception:
     pass
-
-os.environ.setdefault("OMP_NUM_THREADS", "2")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault('OMP_NUM_THREADS', '2')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '2')
 
 
 # Load the detection model (Ultralytics or TFLite wrapper)
@@ -62,52 +44,25 @@ else:
     tfl_delegate = os.getenv("TFL_DELEGATE", "")
     model = YOLO(model_path, names=names_map, num_threads=tfl_threads, delegate=tfl_delegate)
 
+
+
 try:
-    _ = model(np.zeros((320, 320, 3), dtype=np.uint8), imgsz=320, verbose=False, device="cpu")
+    _ = model(np.zeros((320,320,3), dtype = np.uint8), imgsz=320, verbose=False, device ='cpu')
 except Exception:
     pass
+names = getattr(model, 'names', {}) if hasattr(model, 'names') else {}
 
-names = getattr(model, "names", {}) if hasattr(model, "names") else {}
-
+# Screen size with headless-safe fallback
 try:
     screen_width, screen_height = pyautogui.size()
 except Exception:
     screen_width, screen_height = (800, 480)
 
-video_width = screen_width
-full_frame = np.ones((screen_height, screen_width, 3), dtype=np.uint8) * 255
+video_width = 500
+full_frame = np.ones((screen_height, video_width, 3), dtype=np.uint8) * 255
 
 
-def map_code_to_name(csv_path: str | None = None):
-    if csv_path is None:
-        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_info.csv")
-    code_name_map = {}
-    try:
-        with open(csv_path, newline="", encoding="utf-8") as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                cleaned = {(k or "").strip(): (v or "").strip() for k, v in row.items()}
-                code = cleaned.get("Code", "").upper()
-                name = cleaned.get("Name", "")
-                if code and name:
-                    code_name_map[code] = name
-    except Exception as e:
-        print(f"Failed to load CSV at {csv_path}: {e}")
-    return code_name_map
-
-
-code_to_name = map_code_to_name()
-
-
-def draw_text_with_pillow(
-    image,
-    text,
-    position,
-    font_path="arial.ttf",
-    font_size=32,
-    text_color=(255, 255, 255),
-    bg_color=(0, 0, 0),
-):
+def draw_text_with_pillow(image, text, position, font_path="arial.ttf", font_size=32, text_color=(255, 255, 255), bg_color=(0, 0, 0)):
     pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_img)
     try:
@@ -124,15 +79,7 @@ def draw_text_with_pillow(
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
-def draw_text_centered_with_pillow(
-    image,
-    text,
-    center_position,
-    font_path="arial.ttf",
-    font_size=24,
-    text_color=(0, 0, 0),
-    bg_color=(255, 255, 255),
-):
+def draw_text_centered_with_pillow(image, text, center_position, font_path="arial.ttf", font_size=24, text_color=(0, 0, 0), bg_color=(255, 255, 255)):
     pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_img)
     try:
@@ -157,33 +104,27 @@ def camera_error_overlay(width: int = 500, height: int = 500):
     overlay = np.zeros((height, width, 3), dtype="uint8")
     overlay[:] = (0, 0, 0)
     text = "Camera not working"
-    cv2.putText(
-        overlay,
-        text,
-        (20, height // 2),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1,
-        (0, 0, 255),
-        2,
-        cv2.LINE_AA,
-    )
+    cv2.putText(overlay, text, (20, height // 2), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
     cv2.imshow("Error", overlay)
 
 
 def select_or_load_roi(cap, path):
+    
     if os.path.exists(path):
         try:
-            with open(path, "r") as f:
-                x, y, w, h = map(int, f.read().strip().split(","))
+            with open(path, 'r') as f:
+                x, y, w, h = map(int, f.read().strip().split(','))
                 return (x, y, w, h)
         except Exception:
             pass
 
+   
     ok, img = cap.read()
     if not ok or img is None:
         return None
 
     try:
+        
         cv2.namedWindow("select the area")
         cv2.moveWindow("select the area", 0, 0)
         x, y, w, h = cv2.selectROI("select the area", img, fromCenter=False, showCrosshair=True)
@@ -193,8 +134,8 @@ def select_or_load_roi(cap, path):
     except Exception:
         y, x, h, w = 0, 0, img.shape[0], img.shape[1]
 
-    with open(path, "w") as f:
-        f.write(",".join(map(str, (int(x), int(y), int(w), int(h)))))
+    with open(path, 'w') as f:
+        f.write(','.join(map(str, (int(x), int(y), int(w), int(h)))))
     return (int(x), int(y), int(w), int(h))
 
 
@@ -206,124 +147,22 @@ def roi_within_bounds(roi, frame_width, frame_height):
     h = max(1, min(h, frame_height - y))
     return (x, y, w, h)
 
-def _log_detection_image(image, boxes_labels):
-    """Save the ROI image and log metadata rows for each detection"""
-    current_time = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    img_name = f"detection_{current_time}_{uuid4().hex[:6]}.jpg"
-    img_path = os.path.join(LOG_DIR, img_name)
-    try:
-        cv2.imwrite(img_path, image)
-    except Exception as e:
-        return
-    
-    data = []
-    for(_x1, _y1, _x2, _y2, label) in boxes_labels:
-        # label format is
-        # line1 : "CODE - Name"
-        # line2 : "Conf: 0.95"
 
-        lines = str(label).splitlines()
-        code = ""
-        name = ""
-        conf = ""
-
-        if len(lines) >= 1 and " - " in lines[0]:
-            code, name = lines[0].split(" - ", 1)
-            code = code.strip()
-            name = name.strip()
-
-        if len(lines) >= 2 and "Conf:" in lines[1]:
-            conf = lines[1].split("Conf:", 1)[1].strip()
-
-        data.append([code, name, conf, current_time, img_path])
-
-    try:
-        new_file = not os.path.exists(LOG_CSV)
-        with(open(LOG_CSV, "a", newline="", encoding="utf-8") as csvfile):
-            writer = csv.writer(csvfile)
-            if new_file:
-                writer.writerow(["Code", "Name", "Confidence", "Timestamp", "ImagePath"])
-            writer.writerows(data)
-    except Exception as e:
-        pass
-
-def _class_id_from_code_or_name_for_yolo(code, name):
-    code_up = (code or "").strip().upper()
-    name_norm = (name or "").strip()
-    for i, cls in enumerate(classNames):
-        if cls.strip().upper() == code_up or cls.strip() == name_norm:
-            return i
-    return -1
-
-def _save_crops_for_training(frame_bgr, boxes_labels, src_size):
-    """
-    Save each box as an image plus a YOLO txt.
-    YOLO format: <class_id> <cx_norm> <cy_norm> <w_norm> <h_norm>
-    """
-    H, W = src_size if src_size else (frame_bgr.shape[1], frame_bgr.shape[0])
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    for idx, (x1, y1, x2, y2, label) in enumerate(boxes_labels):
-        # Parse code/name from label
-        parts = str(label).splitlines()
-        code = ""
-        name = ""
-        if parts and " - " in parts[0]:
-            code, name = parts[0].split(" - ", 1)
-            code = code.strip()
-            name = name.strip()
-
-        # Map code/name back to class id
-        cls_id = _class_id_from_code_or_name_for_yolo(code, name)
-
-        crop = frame_bgr[y1:y2, x1:x2]
-        base = f"{ts}_{idx:03d}"
-        img_path = TRAIN_IMAGE_DIR / f"{base}.jpg"
-        txt_path = TRAIN_IMAGE_DIR / f"{base}.txt"
-
-        try:
-            cv2.imwrite(str(img_path), crop)
-        except Exception as e:
-            print(f"Crop save failed: {e}")
-            continue
-
-        # YOLO normalized coords
-        cx = ((x1 + x2) / 2.0) / float(W)
-        cy = ((y1 + y2) / 2.0) / float(H)
-        bw = (x2 - x1) / float(W)
-        bh = (y2 - y1) / float(H)
-        try:
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(f"{cls_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
-        except Exception as e:
-            print(f"Label save failed: {e}")
-
-
-
-def draw_overlay(
-    img,
-    text,
-    position="center",
-    box_w_ratio=0.75,
-    box_h=60,
-    color=(255, 255, 255),
-    bg=(0, 0, 0),
-    alpha=0.35,
-):
+def draw_overlay(img, text, position = "center",box_w_ratio = 0.75, box_h = 60,color=(255, 255, 255), bg=(0, 0, 0), alpha=0.35):
     h, w = img.shape[:2]
     box_w = int(w * box_w_ratio)
-    x1 = int((w - box_w) / 2)
+    x1 = int((w - box_w)/2)
     x2 = x1 + box_w
 
     if position == "center":
-        y1 = int(h // 2 - box_h / 2)
+        y1 = int(h//2 - box_h/2)
         y2 = y1 + box_h
     else:
         y1 = 0
         y2 = int(box_h)
-
     overlay = img.copy()
     cv2.rectangle(overlay, (x1, int(y1)), (x2, int(y2)), bg, -1)
-    img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+    img[:] = cv2.addWeighted(overlay, alpha, img, 1-alpha, 0)
     (text_size, baseline) = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
     text_w, text_h = text_size
     text_x = int(x1 + (box_w - text_w) / 2)
@@ -332,7 +171,6 @@ def draw_overlay(
 
 
 def draw_labels_centered(img, boxes_labels, src_size):
-    line_gap = 4
     if not boxes_labels:
         return
     h, w = img.shape[:2]
@@ -349,27 +187,15 @@ def draw_labels_centered(img, boxes_labels, src_size):
     color = (0, 255, 0)
 
     for (x1, y1, x2, y2, label) in boxes_labels:
-        lines = str(label).splitlines()
-        max_w = 0
-        total_h = 0
-        sizes = []
-        for ln in lines:
-            (text_size, baseline) = cv2.getTextSize(ln, font, font_scale, thickness)
-            w_i, h_i = text_size
-            sizes.append((ln, w_i, h_i))
-            max_w = max(max_w, w_i)
-            total_h += h_i + baseline + line_gap
-
         cx = ((x1 + x2) / 2.0) * scale_x
         cy = ((y1 + y2) / 2.0) * scale_y
-        x = int(cx - max_w / 2)
-        y_start = int(cy - total_h / 2)
-        max_line_h = max((h_i for _, _, h_i in sizes), default=0)
-        y_start = max(max_line_h + 2, min(y_start, h - 2))
-
-        for ln, w_i, h_i in sizes:
-            cv2.putText(img, ln, (x, y_start + h_i), font, font_scale, color, thickness, cv2.LINE_AA)
-            y_start += h_i + line_gap
+        (text_size, baseline) = cv2.getTextSize(str(label), font, font_scale, thickness)
+        text_w, text_h = text_size
+        x = int(cx - text_w / 2)
+        y = int(cy + text_h / 2)
+        x = max(0, min(x, w - text_w))
+        y = max(text_h + 2, min(y, h - 2))
+        cv2.putText(img, str(label), (x, y), font, font_scale, color, thickness, cv2.LINE_AA)
 
 
 def draw_boxes(img, boxes_labels, src_size, color=(0, 255, 0), thickness=2):
@@ -382,7 +208,6 @@ def draw_boxes(img, boxes_labels, src_size, color=(0, 255, 0), thickness=2):
     else:
         scale_x = float(w) / float(src_size[0])
         scale_y = float(h) / float(src_size[1])
-
     for (x1, y1, x2, y2, _label) in boxes_labels:
         p1 = (int(x1 * scale_x), int(y1 * scale_y))
         p2 = (int(x2 * scale_x), int(y2 * scale_y))
@@ -422,80 +247,12 @@ def _open_camera():
     except Exception:
         pass
     try:
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     except Exception:
         pass
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     return cap
-
-
-# Additions
-BEEP_WAV_POS = os.path.join(tempfile.gettempdir(), "vbr_beep_positive.wav")
-BEEP_WAV_NEG = os.path.join(tempfile.gettempdir(), "vbr_beep_negative.wav")
-_last_beep_ts = 0.0
-
-def _write_tone_wav(path: str, freq_hz: int, duration_s: float = 0.12, sr: int = 22050, volume: float = 0.25):
-    n = int(sr * duration_s)
-    t = np.arange(n, dtype=np.float32) / float(sr)
-    tone = (np.sin(2.0 * np.pi * float(freq_hz) * t) * float(volume)).astype(np.float32)
-    pcm = (tone * 32767.0).astype(np.int16)
-
-    with wave.open(path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)  # int16
-        wf.setframerate(sr)
-        wf.writeframes(pcm.tobytes())
-
-def _ensure_beep_files():
-    try:
-        if not os.path.exists(BEEP_WAV_POS):
-            _write_tone_wav(BEEP_WAV_POS, freq_hz=880, duration_s=0.10)
-        if not os.path.exists(BEEP_WAV_NEG):
-            _write_tone_wav(BEEP_WAV_NEG, freq_hz=220, duration_s=0.14)
-    except Exception as e:
-        print(f"Beep init error: {e}")
-
-def _aplay(path: str):
-    # -q quiet; DEVNULL to avoid any blocking on stdout/stderr
-    subprocess.run(["aplay", "-q", path], check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-def beep_positive():
-    global _last_beep_ts
-    now = time.time()
-    if now - _last_beep_ts < 0.25:
-        return
-    _last_beep_ts = now
-    try:
-        _ensure_beep_files()
-        _aplay(BEEP_WAV_POS)
-    except Exception:
-        pass
-
-def beep_negative():
-    global _last_beep_ts
-    now = time.time()
-    if now - _last_beep_ts < 0.25:
-        return
-    _last_beep_ts = now
-    try:
-        _ensure_beep_files()
-        _aplay(BEEP_WAV_NEG)
-    except Exception:
-        pass
-
-def boot_triple_beep():
-    # USB audio can come up late at boot; retry for ~10 seconds then stop
-    _ensure_beep_files()
-    for _ in range(10):
-        try:
-            _aplay(BEEP_WAV_POS); time.sleep(0.12)
-            _aplay(BEEP_WAV_POS); time.sleep(0.12)
-            _aplay(BEEP_WAV_POS)
-            return
-        except Exception:
-            time.sleep(1)
 
 
 def _iou(box_a, box_b):
@@ -514,7 +271,6 @@ def _iou(box_a, box_b):
     if union <= 0:
         return 0.0
     return inter / union
-
 
 def _dedupe_detections(dets, iou_same: float = 0.5, iou_diff: float = 0.7):
     """
@@ -543,11 +299,15 @@ def _dedupe_detections(dets, iou_same: float = 0.5, iou_diff: float = 0.7):
             kept.append(d)
     return kept
 
-
 def _build_payload_from_counts(counts_dict):
     payload = []
     for product, count in counts_dict.items():
-        payload.append({"Code": product, "Count": int(count)})
+        
+        payload.append({
+            'Name': product,
+            'Count': int(count),
+            
+        })
     return payload
 
 
@@ -569,7 +329,7 @@ def _canonicalize_product_name(raw_name: str) -> str:
 def one_shot_detect(crop):
     try:
         # Fixed small input for speed on Pi
-        preds = model(crop, imgsz=320, agnostic_nms=False, verbose=False, device="cpu")[0]
+        preds = model(crop, imgsz=320, agnostic_nms=False, verbose=False, device='cpu')[0]
     except Exception:
         return [], Counter(), []
 
@@ -580,20 +340,17 @@ def one_shot_detect(crop):
 
     try:
         dets = []
-        if hasattr(preds, "boxes") and preds.boxes is not None:
+        if hasattr(preds, 'boxes') and preds.boxes is not None:
             # Handle both Ultralytics tensors and our numpy wrapper
             xyxy = preds.boxes.xyxy
             cls = preds.boxes.cls
             conf_arr = preds.boxes.conf
-
             # Convert to numpy arrays
             xyxy = xyxy if isinstance(xyxy, np.ndarray) else xyxy.cpu().numpy()
             cls = cls if isinstance(cls, np.ndarray) else cls.cpu().numpy()
             conf_arr = conf_arr if isinstance(conf_arr, np.ndarray) else conf_arr.cpu().numpy()
-
             xyxy = xyxy.astype(int)
             cls = cls.astype(int)
-
             unknown_conf = 0.85
             for (x1, y1, x2, y2), c, cf in zip(xyxy, cls, conf_arr):
                 if cf < 0.25:
@@ -607,14 +364,9 @@ def one_shot_detect(crop):
 
         # Deduplicate overlapping detections
         dets = _dedupe_detections(dets, iou_same=0.5, iou_diff=0.7)
-
         for x1, y1, x2, y2, canonical_name, cf in dets:
             boxes_for_iou.append((x1, y1, x2, y2))
-            code_key = (canonical_name or "").strip().upper()
-            display_name = code_to_name.get(code_key, canonical_name)
-            line1 = f"{code_key} - {display_name}"
-            line2 = f"Conf: {cf:.2f}"
-            display_label = f"{line1}\n{line2}"
+            display_label = f'{canonical_name}, {cf:.2f}'
             boxes_labels.append((x1, y1, x2, y2, display_label))
             counts[canonical_name] += 1
     except Exception:
@@ -622,23 +374,7 @@ def one_shot_detect(crop):
 
     return boxes_for_iou, counts, boxes_labels
 
-
-def _beep_for_counts(counts: Counter):
-    """
-    Minimal logic:
-      - If any NON-Unknown product present => positive beep
-      - Else if Unknown present => negative beep
-    Only called when we SEND payload / enter STABLE, so it won't spam.
-    """
-    if not counts:
-        return
-    has_known = any((k is not None) and (str(k).strip().lower() != "unknown") and (int(v) > 0) for k, v in counts.items())
-    has_unknown = any(str(k).strip().lower() == "unknown" and int(v) > 0 for k, v in counts.items())
-
-    if has_known:
-        beep_positive()
-    elif has_unknown:
-        beep_negative()
+    
 
 
 def main():
@@ -648,7 +384,6 @@ def main():
         cv2.setNumThreads(2)
     except Exception:
         pass
-
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -664,22 +399,15 @@ def main():
         cv2.waitKey(2000)
         return
 
-    # Additions
-    render_size = (screen_width, screen_height)
-    # ------------------------------------------------------------------
+    rx, ry, rw, rh = roi_cordinates
+    roi_aspect_ratio = max(1e-6, rw / float(rh))
+    video_height = int(video_width / roi_aspect_ratio)
+    video_height = min(video_height, screen_height)
+    render_size = (video_width, video_height)
 
     if not HEADLESS:
         cv2.namedWindow("VBR Realtime scanner", cv2.WINDOW_NORMAL)
-
-        # Make window fullscreen and ensure it fills display
-        try:
-            cv2.setWindowProperty("VBR Realtime scanner", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        except Exception:
-            pass
-        try:
-            cv2.resizeWindow("VBR Realtime scanner", screen_width, screen_height)
-        except Exception:
-            pass
+        cv2.resizeWindow("VBR Realtime scanner", video_width, screen_height)
 
     global prev_frame, motion_count, stable_count
     state = MotionState.IDLE
@@ -695,19 +423,18 @@ def main():
         ret, frame = cap.read()
         if not ret:
             camera_error_overlay(*render_size)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             continue
 
         H, W = frame.shape[:2]
         rx, ry, rw, rh = roi_within_bounds(roi_cordinates, W, H)
-        cropped_frame = frame[ry : ry + rh, rx : rx + rw]
+        cropped_frame = frame[ry:ry+rh, rx:rx+rw]
 
         # Motion check on ROI
         gray = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
         motion_detected = False
-
         if prev_frame is not None:
             frame_delta = cv2.absdiff(prev_frame, gray)
             _, thresh = cv2.threshold(frame_delta, 35, 255, cv2.THRESH_BINARY)
@@ -716,7 +443,6 @@ def main():
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             total_motion_area = sum(cv2.contourArea(c) for c in contours)
             motion_detected = total_motion_area > motion_area_threshold
-
         prev_frame = gray
 
         # Update motion state
@@ -757,12 +483,6 @@ def main():
                             save_detected_product(json.dumps(final_payload))
                             stable_payload_sent = True
                             has_cleared_db = False
-                            _log_detection_image(cropped_frame, boxes_labels)
-                            _save_crops_for_training(cropped_frame, boxes_labels, (cropped_frame.shape[1], cropped_frame.shape[0]))
-
-                            # Additions
-                            _beep_for_counts(counts)
-
                     except Exception as e:
                         print(f"Error saving idle-detected payload: {e}")
                 else:
@@ -788,16 +508,8 @@ def main():
                         if not stable_payload_sent:
                             final_payload = _build_payload_from_counts({k: int(v) for k, v in counts.items()})
                             save_detected_product(json.dumps(final_payload))
-                            _log_detection_image(cropped_frame, boxes_labels)
-                            _save_crops_for_training(cropped_frame, boxes_labels, (cropped_frame.shape[1], cropped_frame.shape[0]))
-
                             stable_payload_sent = True
                             has_cleared_db = False
-
-                            # Additions
-                            _beep_for_counts(counts)
-
-                            # ----------------------------------------------
                     except Exception as e:
                         print(f"Error saving payload on STABLE transition: {e}")
                 else:
@@ -812,7 +524,6 @@ def main():
                         has_cleared_db = True
                     except Exception as e:
                         print(f"Error clearing database in PLACING->IDLE: {e}")
-
         elif state == MotionState.STABLE:
             if motion_count >= motion_frames_required:
                 state = MotionState.PLACING
@@ -829,13 +540,10 @@ def main():
                     print(f"Error clearing DB on STABLE->PLACING: {e}")
 
         # Rendering
+        
         if not HEADLESS:
             view = cropped_frame.copy()
-
-            # Additions
             resized = cv2.resize(view, render_size)
-            # --------------------------------------------------------
-
             if state == MotionState.IDLE:
                 draw_overlay(resized, "Waiting for item", position="center")
             elif state == MotionState.PLACING:
@@ -850,15 +558,16 @@ def main():
                 draw_labels_centered(resized, frozen_boxes_labels, frozen_src_size)
                 draw_overlay(resized, "Proceed to payment now...", position="top", color=(0, 255, 0))
 
-            full_frame[:, :] = resized
+            full_frame[:render_size[1], :] = resized
+            
             cv2.imshow("VBR Realtime scanner", full_frame)
+
             key = cv2.waitKey(1) & 0xFF
         else:
             key = 255
-
-        if key == ord("q"):
+        if key == ord('q'):
             break
-        elif key == ord("r"):
+        elif key == ord('r'):
             if os.path.exists(roi_path):
                 try:
                     os.remove(roi_path)
@@ -866,22 +575,18 @@ def main():
                     print(f"Could not remove ROI file: {e}")
             new_roi = select_or_load_roi(cap, roi_path)
             if new_roi:
-                roi_cordinates = new_roi
-                # render_size stays full screen
-                if not HEADLESS:
-                    try:
-                        cv2.resizeWindow("VBR Realtime scanner", screen_width, screen_height)
-                    except Exception:
-                        pass
+                rx, ry, rw, rh = new_roi
+                roi_aspect = max(1e-6, rw / float(rh))
+                video_height = int(video_width / roi_aspect)
+                video_height = min(video_height, screen_height)
+                render_size = (video_width, video_height)
+                cv2.resizeWindow("VBR Realtime scanner", video_width, screen_height)
 
     cap.release()
     cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
-    # Additions
-    boot_triple_beep()
-    # ------------------------------------------------------------------
-
     save_products_from_csv()
     main()
+    
